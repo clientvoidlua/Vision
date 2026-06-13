@@ -111,6 +111,14 @@ local function getUniversalHealth(character)
 	return 100, 100
 end
 
+local function colorToHex(color)
+	return string.format("%02X%02X%02X",
+		math.floor(color.R * 255),
+		math.floor(color.G * 255),
+		math.floor(color.B * 255)
+	)
+end
+
 local function purgeDuplicates(player)
 	if ActiveESPs[player] then
 		if ActiveESPs[player].Billboard then
@@ -140,8 +148,8 @@ local function createESP(player)
 	billboard:SetAttribute("TargetPlayer", player.UserId)
 	billboard.AlwaysOnTop = true
 	billboard.ResetOnSpawn = false
-	billboard.Size = UDim2.new(0, 500 * SCALE_FACTOR, 0, 20 * SCALE_FACTOR)
-	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+	billboard.Size = UDim2.new(0, 520 * SCALE_FACTOR, 0, 18 * SCALE_FACTOR)
+	billboard.ExtentsOffset = Vector3.new(0, 1, 0)
 	billboard.Enabled = false
 
 	local label = createStealthInstance("TextLabel", billboard)
@@ -152,6 +160,7 @@ local function createESP(player)
 	label.TextColor3 = Color3.fromRGB(240, 240, 240)
 	label.TextStrokeTransparency = 0.4
 	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.RichText = true
 	label.Text = ""
 
 	ActiveESPs[player] = {
@@ -195,20 +204,21 @@ local function updateESP()
 
 						local currentHealth, maxHealth = getUniversalHealth(character)
 
+						local healthColor
+						if currentHealth > 0 then
+							healthColor = Color3.fromHSV((currentHealth / maxHealth) * 0.35, 1, 1)
+						else
+							healthColor = Color3.fromRGB(255, 30, 70)
+						end
+
 						esp.Label.Text = string.format(
-							"@%s  |  Display: %s  |  Health: %d  |  Distance: %dm",
+							'@%s  |  Display: %s  |  Health: <font color="#%s">%d</font>  |  Distance: %dm',
 							player.Name,
 							player.DisplayName,
+							colorToHex(healthColor),
 							currentHealth,
 							distance
 						)
-
-						if currentHealth > 0 then
-							local healthPercent = currentHealth / maxHealth
-							esp.Label.TextColor3 = Color3.fromHSV(healthPercent * 0.35, 1, 1)
-						else
-							esp.Label.TextColor3 = Color3.fromRGB(255, 30, 70)
-						end
 
 						esp.Billboard.Enabled = true
 					end
