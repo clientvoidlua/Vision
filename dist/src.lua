@@ -140,36 +140,23 @@ local function createESP(player)
 	billboard:SetAttribute("TargetPlayer", player.UserId)
 	billboard.AlwaysOnTop = true
 	billboard.ResetOnSpawn = false
-	billboard.Size = UDim2.new(0, 200 * SCALE_FACTOR, 0, 100 * SCALE_FACTOR)
-	billboard.ExtentsOffset = Vector3.new(0, 3.5, 0)
+	billboard.Size = UDim2.new(0, 500 * SCALE_FACTOR, 0, 20 * SCALE_FACTOR)
+	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
 	billboard.Enabled = false
 
-	local layout = createStealthInstance("UIListLayout", billboard)
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 2)
-
-	local function createLabel(order, color)
-		local label = createStealthInstance("TextLabel", billboard)
-		label.Size = UDim2.new(1, 0, 0, 14 * SCALE_FACTOR)
-		label.BackgroundTransparency = 1
-		label.Font = Enum.Font.Gotham
-		label.TextSize = 13 * SCALE_FACTOR
-		label.TextColor3 = color
-		label.TextStrokeTransparency = 0.4
-		label.TextStrokeColor3 = Color3.new(0, 0, 0)
-		label.LayoutOrder = order
-		label.Text = ""
-		return label
-	end
+	local label = createStealthInstance("TextLabel", billboard)
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.GothamSSm
+	label.TextSize = 13 * SCALE_FACTOR
+	label.TextColor3 = Color3.fromRGB(240, 240, 240)
+	label.TextStrokeTransparency = 0.4
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.Text = ""
 
 	ActiveESPs[player] = {
 		Billboard = billboard,
-		Username = createLabel(1, Color3.fromRGB(240, 240, 240)),
-		DisplayName = createLabel(2, Color3.fromRGB(180, 180, 180)),
-		Health = createLabel(3, Color3.fromRGB(0, 255, 120)),
-		Distance = createLabel(4, Color3.fromRGB(200, 200, 200))
+		Label = label,
 	}
 end
 
@@ -208,16 +195,19 @@ local function updateESP()
 
 						local currentHealth, maxHealth = getUniversalHealth(character)
 
-						esp.Username.Text = "@" .. player.Name
-						esp.DisplayName.Text = "[" .. player.DisplayName .. "]"
-						esp.Health.Text = currentHealth .. " HP"
-						esp.Distance.Text = distance .. "m"
+						esp.Label.Text = string.format(
+							"@%s  |  Display: %s  |  Health: %d  |  Distance: %dm",
+							player.Name,
+							player.DisplayName,
+							currentHealth,
+							distance
+						)
 
 						if currentHealth > 0 then
 							local healthPercent = currentHealth / maxHealth
-							esp.Health.TextColor3 = Color3.fromHSV(healthPercent * 0.35, 1, 1)
+							esp.Label.TextColor3 = Color3.fromHSV(healthPercent * 0.35, 1, 1)
 						else
-							esp.Health.TextColor3 = Color3.fromRGB(255, 30, 70)
+							esp.Label.TextColor3 = Color3.fromRGB(255, 30, 70)
 						end
 
 						esp.Billboard.Enabled = true
