@@ -2,8 +2,6 @@ local Vision = {}
 
 Vision.config = {
     Player = true,
-    Object = true,
-    Entity = true,
     LoadAssets = true,
 }
 
@@ -19,7 +17,6 @@ local MasterStorageGui = nil
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 local SCALE_FACTOR = isMobile and 1.3 or 1.0 
-local targetFrameRate = 60
 local renderThrottleModulo = 1
 local frameCounter = 0
 local lastFpsCheck = os.clock()
@@ -76,7 +73,7 @@ local function getMasterStorage()
     
     local targetParent = safeGetHui()
     if not targetParent then return nil end
-
+    
     for _, child in ipairs(targetParent:GetChildren()) do
         if child:GetAttribute("VisionStorage") == true then
             MasterStorageGui = safeCloneRef(child)
@@ -259,6 +256,15 @@ local function updateESP(deltaTime)
             esp.Container.Enabled = true
         else
             esp.Container.Enabled = false
+            if character then
+                task.spawn(function()
+                    local retryPart = locateValidTargetPart(character)
+                    if retryPart then
+                        esp.Billboard.Adornee = retryPart
+                        esp.Container.Enabled = true
+                    end
+                end)
+            end
         end
     end
 end
