@@ -15,17 +15,7 @@ local HeartbeatConnection = nil
 local MasterStorageGui = nil
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-local SCALE_FACTOR = isMobile and 1.3 or 1.0 
-local renderThrottleModulo = 1
-local frameCounter = 0
-local lastFpsCheck = os.clock()
-
-local safeGetHui = (gethui or function() 
-    return LocalPlayer:WaitForChild("PlayerGui", 10) 
-end)
-local safeCloneRef = (cloneref or function(obj) 
-    return obj 
-end)
+local SCALE_FACTOR = isMobile and 1.3 or 1.0
 
 local function generateStealthName()
     local length = math.random(10, 18)
@@ -42,27 +32,9 @@ local function createStealthInstance(className, parent)
     local obj = Instance.new(className)
     obj.Name = generateStealthName()
     if parent then
-        obj.Parent = safeCloneRef(parent)
+        obj.Parent = parent
     end
-    return safeCloneRef(obj)
-end
-
-local function purgeDuplicates(player)
-    if ActiveESPs[player] then
-        if ActiveESPs[player].Billboard then
-            pcall(function() ActiveESPs[player].Billboard:Destroy() end)
-        end
-        ActiveESPs[player] = nil
-    end
-
-    local storage = MasterStorageGui
-    if storage then
-        for _, child in ipairs(storage:GetChildren()) do
-            if child:GetAttribute("TargetPlayer") == player.UserId then
-                pcall(function() child:Destroy() end)
-            end
-        end
-    end
+    return obj
 end
 
 local function getMasterStorage()
@@ -70,12 +42,12 @@ local function getMasterStorage()
         return MasterStorageGui
     end
     
-    local targetParent = safeGetHui()
+    local targetParent = (gethui and gethui()) or LocalPlayer:WaitForChild("PlayerGui", 10)
     if not targetParent then return nil end
     
     for _, child in ipairs(targetParent:GetChildren()) do
         if child:GetAttribute("VisionStorage") == true then
-            MasterStorageGui = safeCloneRef(child)
+            MasterStorageGui = child
             return MasterStorageGui
         end
     end
@@ -112,7 +84,13 @@ local function locateValidTargetPart(character)
         return character.PrimaryPart
     end
     
-    return character:FindFirstChildWhichIsA("BasePart", true)
+    for _, child in ipairs(character:GetChildren()) do
+        if child:IsA("BasePart") then
+            return child
+        end
+    end
+    
+    return nil
 end
 
 local function getUniversalHealth(character)
@@ -129,6 +107,24 @@ local function getUniversalHealth(character)
     end
     
     return 100, 100
+end
+
+local function purgeDuplicates(player)
+    if ActiveESPs[player] then
+        if ActiveESPs[player].Billboard then
+            pcall(function() ActiveESPs[player].Billboard:Destroy() end)
+        end
+        ActiveESPs[player] = nil
+    end
+
+    local storage = getMasterStorage()
+    if storage then
+        for _, child in ipairs(storage:GetChildren()) do
+            if child:GetAttribute("TargetPlayer") == player.UserId then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
 end
 
 local function createESP(player)
@@ -166,115 +162,75 @@ local function createESP(player)
         return label
     end
 
-    local usernameLabel = createLabel(1, Color3.fromRGB(240, 240, 240))
-    local displayNameLabel = createLabel(2, Color3.fromRGB(180, 180, 180))
-    local healthLabel = createLabel(3, Color3.fromRGB(0, 255, 120))
-    local distanceLabel = createLabel(4, Color3.fromRGB(200, 200, 200))
-
     ActiveESPs[player] = {
         Billboard = billboard,
-        Username = usernameLabel,
-        DisplayName = displayNameLabel,
-        Health = healthLabel,
-        Distance = distanceLabel,
-        Connections = {}
+        Username = createLabel(1, Color3.fromRGB(240, 240, 240)),
+        DisplayName = createLabel(2, Color3.fromRGB(180, 180, 180)),
+        Health = createLabel(3, Color3.fromRGB(0, 255, 120)),
+        Distance = createLabel(4, Color3.fromRGB(200, 200, 200))
     }
-
-    local charAdded = player.CharacterAdded:Connect(function()
-        task.wait(0.1)
-        if ActiveESPs[player] then 
-            local targetPart = locateValidTargetPart(player.Character)
-            if targetPart then
-                ActiveESPs[player].Billboard.Adornee = targetPart
-                ActiveESPs[player].Billboard.Enabled = true 
-            end
-        end
-    end)
-    
-    local charRemoving = player.CharacterRemoving:Connect(function()
-        if ActiveESPs[player] then
-            ActiveESPs[player].Billboard.Adornee = nil
-            ActiveESPs[player].Billboard.Enabled = false
-        end
-    end)
-
-    table.insert(ActiveESPs[player].Connections, charAdded)
-    table.insert(ActiveESPs[player].Connections, charRemoving)
-    
-    if player.Character then
-        local targetPart = locateValidTargetPart(player.Character)
-        if targetPart then
-            billboard.Adornee = targetPart
-            billboard.Enabled = true
-        end
-    end
 end
 
 local function removeESP(player)
     purgeDuplicates(player)
 end
 
-local function updateESP(deltaTime)
+local function updateESP()
     if not Vision.config.Player then return end
-    
-    frameCounter = frameCounter + 1
-    if frameCounter % renderThrottleModulo ~= 0 then return end
-    
-    local currentCheckTime = os.clock()
-    local timePassed = currentCheckTime - lastFpsCheck
-    if timePassed >= 0.5 then
-        local currentFps = 1 / deltaTime
-        if currentFps < 45 then
-            renderThrottleModulo = math.min(4, renderThrottleModulo + 1)
-        elseif currentFps > 55 then
-            renderThrottleModulo = math.max(1, renderThrottleModulo - 1)
-        end
-        lastFpsCheck = currentCheckTime
-    end
     
     local localCharacter = LocalPlayer.Character
     local localTargetPart = locateValidTargetPart(localCharacter)
 
-    for player, esp in pairs(ActiveESPs) do
-        local character = player.Character
-        local targetPart = locateValidTargetPart(character)
-        
-        if targetPart then
-            if esp.Billboard.Adornee ~= targetPart then
-                esp.Billboard.Adornee = targetPart
-            end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local esp = ActiveESPs[player]
+            local character = player.Character
+            local targetPart = locateValidTargetPart(character)
             
-            local distance = 0
-            if localTargetPart then
-                distance = math.floor((localTargetPart.Position - targetPart.Position).Magnitude)
-            end
-
-            local currentHealth, maxHealth = getUniversalHealth(character)
-            
-            esp.Username.Text = "@" .. player.Name
-            esp.DisplayName.Text = "[" .. player.DisplayName .. "]"
-            esp.Health.Text = currentHealth .. " HP"
-            esp.Distance.Text = distance .. "m"
-
-            if currentHealth > 0 then
-                local healthPercent = currentHealth / maxHealth
-                esp.Health.TextColor3 = Color3.fromHSV(healthPercent * 0.35, 1, 1)
-            else
-                esp.Health.TextColor3 = Color3.fromRGB(255, 30, 70)
-            end
-            
-            esp.Billboard.Enabled = true
-        else
-            esp.Billboard.Enabled = false
-            if character then
-                task.spawn(function()
-                    local retryPart = locateValidTargetPart(character)
-                    if retryPart then
-                        esp.Billboard.Adornee = retryPart
-                        esp.Billboard.Enabled = true
+            if targetPart then
+                if not esp or not esp.Billboard or esp.Billboard.Parent == nil then
+                    createESP(player)
+                    esp = ActiveESPs[player]
+                end
+                
+                if esp then
+                    if esp.Billboard.Adornee ~= targetPart then
+                        esp.Billboard.Adornee = targetPart
                     end
-                end)
+                    
+                    local distance = 0
+                    if localTargetPart then
+                        distance = math.floor((localTargetPart.Position - targetPart.Position).Magnitude)
+                    end
+
+                    local currentHealth, maxHealth = getUniversalHealth(character)
+                    
+                    esp.Username.Text = "@" .. player.Name
+                    esp.DisplayName.Text = "[" .. player.DisplayName .. "]"
+                    esp.Health.Text = currentHealth .. " HP"
+                    esp.Distance.Text = distance .. "m"
+
+                    if currentHealth > 0 then
+                        local healthPercent = currentHealth / maxHealth
+                        esp.Health.TextColor3 = Color3.fromHSV(healthPercent * 0.35, 1, 1)
+                    else
+                        esp.Health.TextColor3 = Color3.fromRGB(255, 30, 70)
+                    end
+                    
+                    esp.Billboard.Enabled = true
+                end
+            else
+                if esp then
+                    esp.Billboard.Enabled = false
+                    esp.Billboard.Adornee = nil
+                end
             end
+        end
+    end
+    
+    for player, _ in pairs(ActiveESPs) do
+        if not Players:FindFirstChild(player.Name) then
+            removeESP(player)
         end
     end
 end
