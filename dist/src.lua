@@ -8,7 +8,6 @@ Vision.config = {
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 local ActiveESPs = {}
@@ -50,8 +49,8 @@ end
 
 local function purgeDuplicates(player)
     if ActiveESPs[player] then
-        if ActiveESPs[player].Container then
-            pcall(function() ActiveESPs[player].Container:Destroy() end)
+        if ActiveESPs[player].Billboard then
+            pcall(function() ActiveESPs[player].Billboard:Destroy() end)
         end
         ActiveESPs[player] = nil
     end
@@ -113,8 +112,7 @@ local function locateValidTargetPart(character)
         return character.PrimaryPart
     end
     
-    local fallbackPart = character:FindFirstChildWhichIsA("BasePart", true)
-    return fallbackPart
+    return character:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function getUniversalHealth(character)
@@ -140,14 +138,13 @@ local function createESP(player)
     local storage = getMasterStorage()
     if not storage then return end
 
-    local container = createStealthInstance("Folder", storage)
-    container:SetAttribute("TargetPlayer", player.UserId)
-
-    local billboard = createStealthInstance("BillboardGui", container)
+    local billboard = createStealthInstance("BillboardGui", storage)
+    billboard:SetAttribute("TargetPlayer", player.UserId)
     billboard.AlwaysOnTop = true
     billboard.ResetOnSpawn = false
     billboard.Size = UDim2.new(0, 200 * SCALE_FACTOR, 0, 100 * SCALE_FACTOR)
     billboard.ExtentsOffset = Vector3.new(0, 3.5, 0)
+    billboard.Enabled = false
 
     local layout = createStealthInstance("UIListLayout", billboard)
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -165,6 +162,7 @@ local function createESP(player)
         label.TextStrokeTransparency = 0.4
         label.TextStrokeColor3 = Color3.new(0, 0, 0)
         label.LayoutOrder = order
+        label.Text = ""
         return label
     end
 
@@ -174,7 +172,6 @@ local function createESP(player)
     local distanceLabel = createLabel(4, Color3.fromRGB(200, 200, 200))
 
     ActiveESPs[player] = {
-        Container = container,
         Billboard = billboard,
         Username = usernameLabel,
         DisplayName = displayNameLabel,
@@ -185,18 +182,32 @@ local function createESP(player)
 
     local charAdded = player.CharacterAdded:Connect(function()
         task.wait(0.1)
-        if ActiveESPs[player] then ActiveESPs[player].Container.Enabled = true end
+        if ActiveESPs[player] then 
+            local targetPart = locateValidTargetPart(player.Character)
+            if targetPart then
+                ActiveESPs[player].Billboard.Adornee = targetPart
+                ActiveESPs[player].Billboard.Enabled = true 
+            end
+        end
     end)
     
     local charRemoving = player.CharacterRemoving:Connect(function()
         if ActiveESPs[player] then
             ActiveESPs[player].Billboard.Adornee = nil
-            ActiveESPs[player].Container.Enabled = false
+            ActiveESPs[player].Billboard.Enabled = false
         end
     end)
 
     table.insert(ActiveESPs[player].Connections, charAdded)
     table.insert(ActiveESPs[player].Connections, charRemoving)
+    
+    if player.Character then
+        local targetPart = locateValidTargetPart(player.Character)
+        if targetPart then
+            billboard.Adornee = targetPart
+            billboard.Enabled = true
+        end
+    end
 end
 
 local function removeESP(player)
@@ -213,7 +224,6 @@ local function updateESP(deltaTime)
     local timePassed = currentCheckTime - lastFpsCheck
     if timePassed >= 0.5 then
         local currentFps = 1 / deltaTime
-        
         if currentFps < 45 then
             renderThrottleModulo = math.min(4, renderThrottleModulo + 1)
         elseif currentFps > 55 then
@@ -253,15 +263,15 @@ local function updateESP(deltaTime)
                 esp.Health.TextColor3 = Color3.fromRGB(255, 30, 70)
             end
             
-            esp.Container.Enabled = true
+            esp.Billboard.Enabled = true
         else
-            esp.Container.Enabled = false
+            esp.Billboard.Enabled = false
             if character then
                 task.spawn(function()
                     local retryPart = locateValidTargetPart(character)
                     if retryPart then
                         esp.Billboard.Adornee = retryPart
-                        esp.Container.Enabled = true
+                        esp.Billboard.Enabled = true
                     end
                 end)
             end
