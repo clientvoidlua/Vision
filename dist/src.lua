@@ -28,7 +28,7 @@ local ESP = {
     Color = Color3.fromRGB(255, 170, 0),
     Thickness = 2,
     AttachShift = 1,
-    Objects = setmetatable({}, {__mode = "kv"}),
+    Objects = {},
     Overrides = {},
     Highlighted = nil,
     HighlightColor = Color3.fromRGB(255, 255, 255),
@@ -42,7 +42,7 @@ _G.VisionESPInstance = {
         ESP.Enabled = false
         for _, box in pairs(ESP.Objects) do
             if box.Remove then
-                box:Remove()
+                pcall(box.Remove, box)
             end
         end
         table.clear(ESP.Objects)
@@ -51,9 +51,8 @@ _G.VisionESPInstance = {
 
 local PlatformMetrics = {
     IsMobile = table.find({Enum.Platform.Android, Enum.Platform.IOS}, UserInputService:GetPlatform()) ~= nil,
-    PerformanceThrottling = false,
-    LastFpsCheck = 0,
-    CurrentTier = 3
+    CurrentTier = 3,
+    LastFpsCheck = 0
 }
 
 if PlatformMetrics.IsMobile then
@@ -62,6 +61,9 @@ if PlatformMetrics.IsMobile then
 end
 
 local function ApplyFontSettings(drawingTextInstance)
+    pcall(function()
+        drawingTextInstance.Font = 2
+    end)
     pcall(function()
         drawingTextInstance.Font = "rbxasset://fonts/families/GothamSSm.json"
     end)
@@ -86,10 +88,10 @@ local function CreateDrawing(objectType, properties)
 end
 
 local function GetHealthColor(health, maxHealth)
-    local percent = health / maxHealth
-    if percent > 0.7 then
+    local percent = math.clamp(health / maxHealth, 0, 1)
+    if percent >= 0.75 then
         return Color3.fromRGB(0, 255, 0)
-    elseif percent > 0.3 then
+    elseif percent >= 0.35 then
         return Color3.fromRGB(255, 255, 0)
     else
         return Color3.fromRGB(255, 0, 0)
@@ -102,7 +104,7 @@ local function FindValidPrimaryPart(model)
     
     local standardParts = {"HumanoidRootPart", "Head", "Torso", "UpperTorso", "LowerTorso"}
     for _, partName in ipairs(standardParts) do
-        local found = model:FindFirstChild(partName)
+        local found = model:FindFirstChild(partName, true)
         if found and found:IsA("BasePart") then
             return found
         end
@@ -110,12 +112,12 @@ local function FindValidPrimaryPart(model)
     
     local biggestPart = nil
     local maxVolume = 0
-    for _, child in ipairs(model:GetChildren()) do
-        if child:IsA("BasePart") then
-            local volume = child.Size.X * child.Size.Y * child.Size.Z
+    for _, desc in ipairs(model:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            local volume = desc.Size.X * desc.Size.Y * desc.Size.Z
             if volume > maxVolume then
                 maxVolume = volume
-                biggestPart = child
+                biggestPart = desc
             end
         end
     end
@@ -184,14 +186,14 @@ function BoxBase:Remove()
     if self.Components then
         for index, component in pairs(self.Components) do
             component.Visible = false
-            component:Remove()
+            pcall(function() component:Remove() end)
             self.Components[index] = nil
         end
     end
     if self.SkeletonLines then
         for index, line in pairs(self.SkeletonLines) do
             line.Visible = false
-            line:Remove()
+            pcall(function() line:Remove() end)
             self.SkeletonLines[index] = nil
         end
     end
@@ -272,19 +274,18 @@ function BoxBase:Update()
         Torso = shiftedCFrame
     }
 
-    local headPart = self.Object:FindFirstChild("Head") or self.PrimaryPart
+    local headPart = self.Object:FindFirstChild("Head", true) or self.PrimaryPart
     local headPosition, headVisible = Camera:WorldToViewportPoint(headPart.Position + Vector3.new(0, 2.5, 0))
 
     if ESP.Names and headVisible then
-        local formattedText = string.format("@%s | Display: %s | Health: %d | Distance: %dm", 
-            self.Player and self.Player.Name or self.Object.Name,
-            self.Player and self.Player.DisplayName or self.Object.Name,
-            math.round(currentHealth),
-            math.round(distance)
-        )
+        local username = self.Player and self.Player.Name or self.Object.Name
+        local displayName = self.Player and self.Player.DisplayName or self.Object.Name
+        
         self.Components.Name.Visible = true
         self.Components.Name.Position = Vector2.new(headPosition.X, headPosition.Y)
-        self.Components.Name.Text = formattedText
+        self.Components.Name.Text = string.format("@%s | Display: %s | Health: %d | Distance: %dm", 
+            username, displayName, math.round(currentHealth), math.round(distance)
+        )
         self.Components.Name.Color = dynamicHealthColor
     else
         self.Components.Name.Visible = false
@@ -309,10 +310,10 @@ function BoxBase:Update()
     end
 
     if ESP.HealthBars and boxVisible and PlatformMetrics.CurrentTier > 1 then
+        local alignmentOffset = 6
         self.Components.HealthBarOutline.Visible = true
-        self.Components.HealthBarOutline.From = Vector2.new(topLeft.X - 5, topLeft.Y)
-        self.Components.HealthBarOutline.To = Vector2.new(bottomLeft.X - 5, bottomLeft.Y)
-        self.Components.HealthBarOutline.Color = Color3.fromRGB(0, 0, 0)
+        self.Components.HealthBarOutline.From = Vector2.new(topLeft.X - alignmentOffset, topLeft.Y)
+        self.Components.HealthBarOutline.To = Vector2.new(bottomLeft.X - alignmentOffset, bottomLeft.Y)
         self.Components.HealthBarOutline.Thickness = ESP.Thickness + 2
 
         local healthPercent = math.clamp(currentHealth / maximumHealth, 0, 1)
@@ -320,8 +321,8 @@ function BoxBase:Update()
         local barProgressY = topLeft.Y + (barHeightY * (1 - healthPercent))
 
         self.Components.HealthBar.Visible = true
-        self.Components.HealthBar.From = Vector2.new(topLeft.X - 5, barProgressY)
-        self.Components.HealthBar.To = Vector2.new(bottomLeft.X - 5, bottomLeft.Y)
+        self.Components.HealthBar.From = Vector2.new(topLeft.X - alignmentOffset, barProgressY)
+        self.Components.HealthBar.To = Vector2.new(bottomLeft.X - alignmentOffset, bottomLeft.Y)
         self.Components.HealthBar.Color = dynamicHealthColor
         self.Components.HealthBar.Thickness = ESP.Thickness
     else
@@ -356,9 +357,9 @@ function BoxBase:Update()
         }
 
         local lineIndex = 1
-        for _, jointPair do
-            local partA = self.Object:FindFirstChild(jointPair[1])
-            local partB = self.Object:FindFirstChild(jointPair[2])
+        for _, jointPair in ipairs(joints) do
+            local partA = self.Object:FindFirstChild(jointPair[1], true)
+            local partB = self.Object:FindFirstChild(jointPair[2], true)
 
             if partA and partB and partA:IsA("BasePart") and partB:IsA("BasePart") then
                 local posA, visA = Camera:WorldToViewportPoint(partA.Position)
@@ -399,9 +400,9 @@ function ESP:Add(object, options)
     local determinedPart = FindValidPrimaryPart(object)
     if not determinedPart then return end
 
-    local existingBox = self:GetBox(object)
+    local existingBox = self.Objects[object]
     if existingBox then
-        existingBox:Remove()
+        pcall(existingBox.Remove, existingBox)
     end
 
     local box = setmetatable({
@@ -420,49 +421,16 @@ function ESP:Add(object, options)
         RenderInNil = options.RenderInNil
     }, BoxBase)
 
-    box.Components["Quad"] = CreateDrawing("Quad", {
-        Thickness = self.Thickness,
-        Transparency = 1,
-        Filled = false,
-        Visible = false
-    })
-    box.Components["Name"] = CreateDrawing("Text", {
-        Text = box.Name,
-        Color = box.Color or self.Color,
-        Center = true,
-        Outline = true,
-        Size = 14,
-        Visible = false
-    })
-    box.Components["Tracer"] = CreateDrawing("Line", {
-        Thickness = self.Thickness,
-        Color = box.Color or self.Color,
-        Transparency = 1,
-        Visible = false
-    })
-    box.Components["HealthBarOutline"] = CreateDrawing("Line", {
-        Thickness = self.Thickness + 2,
-        Color = Color3.fromRGB(0, 0, 0),
-        Transparency = 1,
-        Visible = false
-    })
-    box.Components["HealthBar"] = CreateDrawing("Line", {
-        Thickness = self.Thickness,
-        Color = Color3.fromRGB(0, 255, 0),
-        Transparency = 1,
-        Visible = false
-    })
+    box.Components["Quad"] = CreateDrawing("Quad", {Thickness = self.Thickness, Transparency = 1, Filled = false, Visible = false})
+    box.Components["Name"] = CreateDrawing("Text", {Text = box.Name, Color = box.Color or self.Color, Center = true, Outline = true, Size = 13, Visible = false})
+    box.Components["Tracer"] = CreateDrawing("Line", {Thickness = self.Thickness, Color = box.Color or self.Color, Transparency = 1, Visible = false})
+    box.Components["HealthBarOutline"] = CreateDrawing("Line", {Thickness = self.Thickness + 2, Color = Color3.fromRGB(0, 0, 0), Transparency = 1, Visible = false})
+    box.Components["HealthBar"] = CreateDrawing("Line", {Thickness = self.Thickness, Color = Color3.fromRGB(0, 255, 0), Transparency = 1, Visible = false})
 
     self.Objects[object] = box
 
     object.AncestryChanged:Connect(function(_, newParent)
         if newParent == nil and self.AutoRemove then
-            box:Remove()
-        end
-    end)
-
-    object:GetPropertyChangedSignal("Parent"):Connect(function()
-        if object.Parent == nil and self.AutoRemove then
             box:Remove()
         end
     end)
@@ -484,34 +452,25 @@ local function HandleCharacter(character)
     local player = Players:GetPlayerFromCharacter(character)
     if not player then return end
 
-    local existing = ESP:GetBox(character)
-    if existing then
-        existing:Remove()
+    if ESP.Objects[character] then
+        pcall(ESP.Objects[character].Remove, ESP.Objects[character])
     end
 
-    local rootPart = FindValidPrimaryPart(character)
-    if not rootPart then
-        local attachmentConnection
-        attachmentConnection = character.ChildAdded:Connect(function(child)
-            if child:IsA("BasePart") then
-                local verifiedPart = FindValidPrimaryPart(character)
-                if verifiedPart then
-                    attachmentConnection:Disconnect()
-                    ESP:Add(character, {
-                        Name = player.Name,
-                        Player = player,
-                        PrimaryPart = verifiedPart
-                    })
-                end
-            end
-        end)
-    else
-        ESP:Add(character, {
-            Name = player.Name,
-            Player = player,
-            PrimaryPart = rootPart
-        })
+    local rootPart = nil
+    for i = 1, 30 do
+        if not character.Parent then return end
+        rootPart = FindValidPrimaryPart(character)
+        if rootPart then break end
+        task.wait(0.1)
     end
+
+    if not rootPart then return end
+
+    ESP:Add(character, {
+        Name = player.Name,
+        Player = player,
+        PrimaryPart = rootPart
+    })
 end
 
 local function HandlePlayer(player)
@@ -545,10 +504,10 @@ RunService.RenderStepped:Connect(function(deltaTime)
         local currentFps = 1 / deltaTime
         PlatformMetrics.LastFpsCheck = 0
         
-        if currentFps < 30 then
+        if currentFps < 35 then
             PlatformMetrics.CurrentTier = 1
-            ESP.MaxDistance = 250
-        elseif currentFps < 50 then
+            ESP.MaxDistance = 200
+        elseif currentFps < 52 then
             PlatformMetrics.CurrentTier = 2
             ESP.MaxDistance = 500
         else
@@ -564,7 +523,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
         if box.Update then
             local success, err = pcall(box.Update, box)
             if not success then
-                warn(err)
+                warn("[Vision Engine Error]: " .. tostring(err))
             end
         end
     end
