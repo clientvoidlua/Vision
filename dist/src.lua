@@ -6,11 +6,19 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
+if _G.VisionESPInstance then
+    pcall(function()
+        _G.VisionESPInstance:Destroy()
+    end)
+end
+
 local ESP = {
     Enabled = true,
     Boxes = true,
     Names = true,
     Tracers = true,
+    Skeletons = true,
+    HealthBars = true,
     TeamMates = true,
     Players = true,
     TeamColor = true,
@@ -29,10 +37,23 @@ local ESP = {
     TargetFPS = 60
 }
 
+_G.VisionESPInstance = {
+    Destroy = function()
+        ESP.Enabled = false
+        for _, box in pairs(ESP.Objects) do
+            if box.Remove then
+                box:Remove()
+            end
+        end
+        table.clear(ESP.Objects)
+    end
+}
+
 local PlatformMetrics = {
     IsMobile = table.find({Enum.Platform.Android, Enum.Platform.IOS}, UserInputService:GetPlatform()) ~= nil,
     PerformanceThrottling = false,
-    LastFpsCheck = 0
+    LastFpsCheck = 0,
+    CurrentTier = 3
 }
 
 if PlatformMetrics.IsMobile then
@@ -62,6 +83,43 @@ local function CreateDrawing(objectType, properties)
         ApplyFontSettings(drawingElement)
     end
     return drawingElement
+end
+
+local function GetHealthColor(health, maxHealth)
+    local percent = health / maxHealth
+    if percent > 0.7 then
+        return Color3.fromRGB(0, 255, 0)
+    elseif percent > 0.3 then
+        return Color3.fromRGB(255, 255, 0)
+    else
+        return Color3.fromRGB(255, 0, 0)
+    end
+end
+
+local function FindValidPrimaryPart(model)
+    if not model then return nil end
+    if model:IsA("BasePart") then return model end
+    
+    local standardParts = {"HumanoidRootPart", "Head", "Torso", "UpperTorso", "LowerTorso"}
+    for _, partName in ipairs(standardParts) do
+        local found = model:FindFirstChild(partName)
+        if found and found:IsA("BasePart") then
+            return found
+        end
+    end
+    
+    local biggestPart = nil
+    local maxVolume = 0
+    for _, child in ipairs(model:GetChildren()) do
+        if child:IsA("BasePart") then
+            local volume = child.Size.X * child.Size.Y * child.Size.Z
+            if volume > maxVolume then
+                maxVolume = volume
+                biggestPart = child
+            end
+        end
+    end
+    return biggestPart
 end
 
 function ESP:GetTeam(player)
@@ -105,6 +163,11 @@ function ESP:Toggle(state)
                     component.Visible = false
                 end
             end
+            if box.SkeletonLines then
+                for _, line in pairs(box.SkeletonLines) do
+                    line.Visible = false
+                end
+            end
         end
     end
 end
@@ -113,73 +176,49 @@ function ESP:GetBox(object)
     return self.Objects[object]
 end
 
-function ESP:AddObject(parent, options)
-    local function NewListener(child)
-        if options.Type and not child:IsA(options.Type) then return end
-        if options.Name and child.Name ~= options.Name then return end
-        if options.Validator and not options.Validator(child) then return end
-
-        local boxOptions = table.clone(options)
-
-        if type(options.PrimaryPart) == "string" then    
-            boxOptions.PrimaryPart = child:WaitForChild(options.PrimaryPart)    
-        elseif type(options.PrimaryPart) == "function" then    
-            boxOptions.PrimaryPart = options.PrimaryPart(child)    
-        end    
-
-        if type(options.Color) == "function" then    
-            boxOptions.Color = options.Color(child)    
-        end    
-
-        if options.CustomName then    
-            if type(options.CustomName) == "function" then    
-                boxOptions.Name = options.CustomName(child)    
-            else    
-                boxOptions.Name = options.CustomName    
-            end    
-        end    
-
-        local box = ESP:Add(child, boxOptions)    
-        if options.OnAdded then    
-            task.spawn(options.OnAdded, box)    
-        end
-    end
-
-    local connection = options.Recursive and parent.DescendantAdded or parent.ChildAdded
-    local currentChildren = options.Recursive and parent:GetDescendants() or parent:GetChildren()
-
-    connection:Connect(NewListener)
-    for _, child in ipairs(currentChildren) do
-        task.spawn(NewListener, child)
-    end
-end
-
 local BoxBase = {}
 BoxBase.__index = BoxBase
 
 function BoxBase:Remove()
     ESP.Objects[self.Object] = nil
-    for index, component in pairs(self.Components) do
-        component.Visible = false
-        component:Remove()
-        self.Components[index] = nil
+    if self.Components then
+        for index, component in pairs(self.Components) do
+            component.Visible = false
+            component:Remove()
+            self.Components[index] = nil
+        end
+    end
+    if self.SkeletonLines then
+        for index, line in pairs(self.SkeletonLines) do
+            line.Visible = false
+            line:Remove()
+            self.SkeletonLines[index] = nil
+        end
     end
 end
 
 function BoxBase:Update()
-    if not self.PrimaryPart then
+    if not self.PrimaryPart or not self.PrimaryPart.Parent then
         return self:Remove()
     end
 
     local cameraCFrame = Camera.CFrame
     local distance = (cameraCFrame.Position - self.PrimaryPart.Position).Magnitude
 
-    if distance > ESP.MaxDistance then
+    if distance > ESP.MaxDistance or not ESP.Enabled then
         for _, component in pairs(self.Components) do
             component.Visible = false
         end
+        for _, line in pairs(self.SkeletonLines) do
+            line.Visible = false
+        end
         return
     end
+
+    local humanoid = self.Object:FindFirstChildOfClass("Humanoid")
+    local currentHealth = humanoid and humanoid.Health or 100
+    local maximumHealth = humanoid and humanoid.MaxHealth or 100
+    local dynamicHealthColor = GetHealthColor(currentHealth, maximumHealth)
 
     local color = ESP.Color
     if ESP.Highlighted == self.Object then
@@ -211,6 +250,9 @@ function BoxBase:Update()
         for _, component in pairs(self.Components) do
             component.Visible = false
         end
+        for _, line in pairs(self.SkeletonLines) do
+            line.Visible = false
+        end
         return
     end
 
@@ -227,64 +269,68 @@ function BoxBase:Update()
         TopRight = shiftedCFrame * CFrame.new(-size.X / 2, size.Y / 2, 0),
         BottomLeft = shiftedCFrame * CFrame.new(size.X / 2, -size.Y / 2, 0),
         BottomRight = shiftedCFrame * CFrame.new(-size.X / 2, -size.Y / 2, 0),
-        TagPos = shiftedCFrame * CFrame.new(0, size.Y / 2, 0),
         Torso = shiftedCFrame
     }
 
-    local scaleFactor = math.clamp(1 / (distance * 0.015), 0.4, 1.1)
+    local headPart = self.Object:FindFirstChild("Head") or self.PrimaryPart
+    local headPosition, headVisible = Camera:WorldToViewportPoint(headPart.Position + Vector3.new(0, 2.5, 0))
 
-    if (ESP.Boxes or ESP.Box) and not PlatformMetrics.PerformanceThrottling then
-        local topLeft, vis1 = Camera:WorldToViewportPoint(locations.TopLeft.Position)
-        local topRight, vis2 = Camera:WorldToViewportPoint(locations.TopRight.Position)
-        local bottomLeft, vis3 = Camera:WorldToViewportPoint(locations.BottomLeft.Position)
-        local bottomRight, vis4 = Camera:WorldToViewportPoint(locations.BottomRight.Position)
-
-        if self.Components.Quad then
-            if vis1 or vis2 or vis3 or vis4 then
-                self.Components.Quad.Visible = true
-                self.Components.Quad.PointA = Vector2.new(topRight.X, topRight.Y)
-                self.Components.Quad.PointB = Vector2.new(topLeft.X, topLeft.Y)
-                self.Components.Quad.PointC = Vector2.new(bottomLeft.X, bottomLeft.Y)
-                self.Components.Quad.PointD = Vector2.new(bottomRight.X, bottomRight.Y)
-                self.Components.Quad.Color = color
-                self.Components.Quad.Thickness = ESP.Thickness
-            else
-                self.Components.Quad.Visible = false
-            end
-        end
-    else
-        if self.Components.Quad then
-            self.Components.Quad.Visible = false
-        end
-    end
-
-    if ESP.Names or ESP.Name then
-        local tagPos, vis5 = Camera:WorldToViewportPoint(locations.TagPos.Position)
-
-        if vis5 then
-            self.Components.Name.Visible = true
-            self.Components.Name.Position = Vector2.new(tagPos.X, tagPos.Y - (16 * scaleFactor))
-            self.Components.Name.Text = self.Name
-            self.Components.Name.Color = color
-            self.Components.Name.Size = math.round(16 * scaleFactor)
-
-            self.Components.Distance.Visible = true
-            self.Components.Distance.Position = Vector2.new(tagPos.X, tagPos.Y - (16 * scaleFactor) + math.round(14 * scaleFactor))
-            self.Components.Distance.Text = math.floor(distance) .. " studs"
-            self.Components.Distance.Color = color
-            self.Components.Distance.Size = math.round(12 * scaleFactor)
-        else
-            self.Components.Name.Visible = false
-            self.Components.Distance.Visible = false
-        end
+    if ESP.Names and headVisible then
+        local formattedText = string.format("@%s | Display: %s | Health: %d | Distance: %dm", 
+            self.Player and self.Player.Name or self.Object.Name,
+            self.Player and self.Player.DisplayName or self.Object.Name,
+            math.round(currentHealth),
+            math.round(distance)
+        )
+        self.Components.Name.Visible = true
+        self.Components.Name.Position = Vector2.new(headPosition.X, headPosition.Y)
+        self.Components.Name.Text = formattedText
+        self.Components.Name.Color = dynamicHealthColor
     else
         self.Components.Name.Visible = false
-        self.Components.Distance.Visible = false
     end
 
-    if ESP.Tracers or ESP.Tracer then
-        local torsoPos, vis6 = Camera:WorldToViewportPoint(locations.Torso.Position)
+    local topLeft, vis1 = Camera:WorldToViewportPoint(locations.TopLeft.Position)
+    local topRight, vis2 = Camera:WorldToViewportPoint(locations.TopRight.Position)
+    local bottomLeft, vis3 = Camera:WorldToViewportPoint(locations.BottomLeft.Position)
+    local bottomRight, vis4 = Camera:WorldToViewportPoint(locations.BottomRight.Position)
+    local boxVisible = vis1 or vis2 or vis3 or vis4
 
+    if ESP.Boxes and boxVisible and PlatformMetrics.CurrentTier > 1 then
+        self.Components.Quad.Visible = true
+        self.Components.Quad.PointA = Vector2.new(topRight.X, topRight.Y)
+        self.Components.Quad.PointB = Vector2.new(topLeft.X, topLeft.Y)
+        self.Components.Quad.PointC = Vector2.new(bottomLeft.X, bottomLeft.Y)
+        self.Components.Quad.PointD = Vector2.new(bottomRight.X, bottomRight.Y)
+        self.Components.Quad.Color = color
+        self.Components.Quad.Thickness = ESP.Thickness
+    else
+        self.Components.Quad.Visible = false
+    end
+
+    if ESP.HealthBars and boxVisible and PlatformMetrics.CurrentTier > 1 then
+        self.Components.HealthBarOutline.Visible = true
+        self.Components.HealthBarOutline.From = Vector2.new(topLeft.X - 5, topLeft.Y)
+        self.Components.HealthBarOutline.To = Vector2.new(bottomLeft.X - 5, bottomLeft.Y)
+        self.Components.HealthBarOutline.Color = Color3.fromRGB(0, 0, 0)
+        self.Components.HealthBarOutline.Thickness = ESP.Thickness + 2
+
+        local healthPercent = math.clamp(currentHealth / maximumHealth, 0, 1)
+        local barHeightY = bottomLeft.Y - topLeft.Y
+        local barProgressY = topLeft.Y + (barHeightY * (1 - healthPercent))
+
+        self.Components.HealthBar.Visible = true
+        self.Components.HealthBar.From = Vector2.new(topLeft.X - 5, barProgressY)
+        self.Components.HealthBar.To = Vector2.new(bottomLeft.X - 5, bottomLeft.Y)
+        self.Components.HealthBar.Color = dynamicHealthColor
+        self.Components.HealthBar.Thickness = ESP.Thickness
+    else
+        self.Components.HealthBarOutline.Visible = false
+        self.Components.HealthBar.Visible = false
+    end
+
+    if ESP.Tracers and boxVisible and PlatformMetrics.CurrentTier > 2 then
+        local torsoPos, vis6 = Camera:WorldToViewportPoint(locations.Torso.Position)
         if vis6 then
             self.Components.Tracer.Visible = true
             self.Components.Tracer.From = Vector2.new(torsoPos.X, torsoPos.Y)
@@ -297,6 +343,52 @@ function BoxBase:Update()
     else
         self.Components.Tracer.Visible = false
     end
+
+    if ESP.Skeletons and PlatformMetrics.CurrentTier > 2 then
+        local joints = {
+            {"Head", "Torso"}, {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
+            {"Torso", "Left Leg"}, {"Torso", "Right Leg"}, {"Head", "UpperTorso"},
+            {"UpperTorso", "LowerTorso"}, {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"},
+            {"LeftLowerArm", "LeftHand"}, {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"},
+            {"RightLowerArm", "RightHand"}, {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"},
+            {"LeftLowerLeg", "LeftFoot"}, {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"},
+            {"RightLowerLeg", "RightFoot"}
+        }
+
+        local lineIndex = 1
+        for _, jointPair do
+            local partA = self.Object:FindFirstChild(jointPair[1])
+            local partB = self.Object:FindFirstChild(jointPair[2])
+
+            if partA and partB and partA:IsA("BasePart") and partB:IsA("BasePart") then
+                local posA, visA = Camera:WorldToViewportPoint(partA.Position)
+                local posB, visB = Camera:WorldToViewportPoint(partB.Position)
+
+                if visA or visB then
+                    local line = self.SkeletonLines[lineIndex]
+                    if not line then
+                        line = CreateDrawing("Line", {Thickness = 1.5, Transparency = 1})
+                        self.SkeletonLines[lineIndex] = line
+                    end
+                    line.Visible = true
+                    line.From = Vector2.new(posA.X, posA.Y)
+                    line.To = Vector2.new(posB.X, posB.Y)
+                    line.Color = color
+                    lineIndex = lineIndex + 1
+                end
+            end
+        end
+
+        for i = lineIndex, #self.SkeletonLines do
+            if self.SkeletonLines[i] then
+                self.SkeletonLines[i].Visible = false
+            end
+        end
+    else
+        for _, line in pairs(self.SkeletonLines) do
+            line.Visible = false
+        end
+    end
 end
 
 function ESP:Add(object, options)
@@ -304,11 +396,12 @@ function ESP:Add(object, options)
         return
     end
 
-    local determinedPart = nil
-    if object:IsA("Model") then
-        determinedPart = object.PrimaryPart or object:FindFirstChild("HumanoidRootPart") or object:FindFirstChildWhichIsA("BasePart")
-    elseif object:IsA("BasePart") then
-        determinedPart = object
+    local determinedPart = FindValidPrimaryPart(object)
+    if not determinedPart then return end
+
+    local existingBox = self:GetBox(object)
+    if existingBox then
+        existingBox:Remove()
     end
 
     local box = setmetatable({
@@ -318,45 +411,46 @@ function ESP:Add(object, options)
         Size = options.Size or self.BoxSize,
         Object = object,
         Player = options.Player or self:GetPlayerFromCharacter(object),
-        PrimaryPart = options.PrimaryPart or determinedPart,
+        PrimaryPart = determinedPart,
         Components = {},
+        SkeletonLines = {},
         IsEnabled = options.IsEnabled,
         Temporary = options.Temporary,
         ColorDynamic = options.ColorDynamic,
         RenderInNil = options.RenderInNil
     }, BoxBase)
 
-    local existingBox = self:GetBox(object)
-    if existingBox then
-        existingBox:Remove()
-    end
-
     box.Components["Quad"] = CreateDrawing("Quad", {
         Thickness = self.Thickness,
         Transparency = 1,
         Filled = false,
-        Visible = (self.Enabled and (self.Boxes or self.Box))
+        Visible = false
     })
     box.Components["Name"] = CreateDrawing("Text", {
         Text = box.Name,
         Color = box.Color or self.Color,
         Center = true,
         Outline = true,
-        Size = 16,
-        Visible = (self.Enabled and (self.Names or self.Name))
-    })
-    box.Components["Distance"] = CreateDrawing("Text", {
-        Color = box.Color or self.Color,
-        Center = true,
-        Outline = true,
-        Size = 12,
-        Visible = (self.Enabled and (self.Names or self.Name))
+        Size = 14,
+        Visible = false
     })
     box.Components["Tracer"] = CreateDrawing("Line", {
         Thickness = self.Thickness,
         Color = box.Color or self.Color,
         Transparency = 1,
-        Visible = (self.Enabled and (self.Tracers or self.Tracer))
+        Visible = false
+    })
+    box.Components["HealthBarOutline"] = CreateDrawing("Line", {
+        Thickness = self.Thickness + 2,
+        Color = Color3.fromRGB(0, 0, 0),
+        Transparency = 1,
+        Visible = false
+    })
+    box.Components["HealthBar"] = CreateDrawing("Line", {
+        Thickness = self.Thickness,
+        Color = Color3.fromRGB(0, 255, 0),
+        Transparency = 1,
+        Visible = false
     })
 
     self.Objects[object] = box
@@ -386,20 +480,29 @@ function ESP:Add(object, options)
 end
 
 local function HandleCharacter(character)
+    if not character then return end
     local player = Players:GetPlayerFromCharacter(character)
     if not player then return end
 
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local existing = ESP:GetBox(character)
+    if existing then
+        existing:Remove()
+    end
+
+    local rootPart = FindValidPrimaryPart(character)
     if not rootPart then
         local attachmentConnection
         attachmentConnection = character.ChildAdded:Connect(function(child)
-            if child.Name == "HumanoidRootPart" then
-                attachmentConnection:Disconnect()
-                ESP:Add(character, {
-                    Name = player.Name,
-                    Player = player,
-                    PrimaryPart = child
-                })
+            if child:IsA("BasePart") then
+                local verifiedPart = FindValidPrimaryPart(character)
+                if verifiedPart then
+                    attachmentConnection:Disconnect()
+                    ESP:Add(character, {
+                        Name = player.Name,
+                        Player = player,
+                        PrimaryPart = verifiedPart
+                    })
+                end
             end
         end)
     else
@@ -412,17 +515,26 @@ local function HandleCharacter(character)
 end
 
 local function HandlePlayer(player)
-    player.CharacterAdded:Connect(HandleCharacter)
+    if player == LocalPlayer then return end
+    player.CharacterAdded:Connect(function(character)
+        task.spawn(HandleCharacter, character)
+    end)
     if player.Character then
         task.spawn(HandleCharacter, player.Character)
     end
 end
 
 Players.PlayerAdded:Connect(HandlePlayer)
-for _, player in ipairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
-        HandlePlayer(player)
+Players.PlayerRemoving:Connect(function(player)
+    for obj, box in pairs(ESP.Objects) do
+        if box.Player == player then
+            box:Remove()
+        end
     end
+end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+    HandlePlayer(player)
 end
 
 RunService.RenderStepped:Connect(function(deltaTime)
@@ -433,13 +545,16 @@ RunService.RenderStepped:Connect(function(deltaTime)
         local currentFps = 1 / deltaTime
         PlatformMetrics.LastFpsCheck = 0
         
-        if currentFps < 45 then
-            PlatformMetrics.PerformanceThrottling = true
-            ESP.MaxDistance = math.max(250, ESP.MaxDistance - 50)
-        elseif currentFps > 55 then
-            PlatformMetrics.PerformanceThrottling = false
+        if currentFps < 30 then
+            PlatformMetrics.CurrentTier = 1
+            ESP.MaxDistance = 250
+        elseif currentFps < 50 then
+            PlatformMetrics.CurrentTier = 2
+            ESP.MaxDistance = 500
+        else
+            PlatformMetrics.CurrentTier = 3
             local absoluteMax = PlatformMetrics.IsMobile and 400 or 1200
-            ESP.MaxDistance = math.min(absoluteMax, ESP.MaxDistance + 25)
+            ESP.MaxDistance = absoluteMax
         end
     end
 
