@@ -6,13 +6,8 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
-local FontIndex = 3
-if Drawing and Drawing.Fonts and Drawing.Fonts.GothamSSM then
-    FontIndex = Drawing.Fonts.GothamSSM
-end
-
 local ESP = {
-    Enabled = false,
+    Enabled = true,
     Boxes = true,
     Names = true,
     Tracers = true,
@@ -45,12 +40,26 @@ if PlatformMetrics.IsMobile then
     ESP.Thickness = 1
 end
 
+local function ApplyFontSettings(drawingTextInstance)
+    pcall(function()
+        drawingTextInstance.Font = "rbxasset://fonts/families/GothamSSm.json"
+    end)
+    pcall(function()
+        drawingTextInstance.FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json")
+    end)
+end
+
 local function CreateDrawing(objectType, properties)
     local drawingElement = Drawing.new(objectType)
     if properties then
         for propertyName, propertyValue in pairs(properties) do
-            drawingElement[propertyName] = propertyValue
+            if propertyName ~= "Font" and propertyName ~= "FontFace" then
+                drawingElement[propertyName] = propertyValue
+            end
         end
+    end
+    if objectType == "Text" then
+        ApplyFontSettings(drawingElement)
     end
     return drawingElement
 end
@@ -74,7 +83,7 @@ function ESP:GetColor(object)
         return self.Overrides.GetColor(object)
     end
     local player = self:GetPlayerFromCharacter(object)
-    if player and self.TeamColor and player.Team then
+    if player and (self.TeamColor or self.TeamColor == nil) and player.Team then
         return player.Team.TeamColor.Color
     end
     return self.Color
@@ -82,7 +91,7 @@ end
 
 function ESP:GetPlayerFromCharacter(character)
     if self.Overrides.GetPlayerFromCharacter then
-        return self.Overrides.Overrides.GetPlayerFromCharacter(character)
+        return self.Overrides.GetPlayerFromCharacter(character)
     end
     return Players:GetPlayerFromCharacter(character)
 end
@@ -183,10 +192,10 @@ function BoxBase:Update()
     if ESP.Overrides.UpdateAllow and not ESP.Overrides.UpdateAllow(self) then
         renderAllowed = false
     end
-    if self.Player and not ESP.TeamMates and ESP:IsTeamMate(self.Player) then
+    if self.Player and not (ESP.TeamMates or ESP.TeamMate) and ESP:IsTeamMate(self.Player) then
         renderAllowed = false
     end
-    if self.Player and not ESP.Players then
+    if self.Player and not (ESP.Players or ESP.Player) then
         renderAllowed = false
     end
     if type(self.IsEnabled) == "string" and not ESP[self.IsEnabled] then
@@ -224,7 +233,7 @@ function BoxBase:Update()
 
     local scaleFactor = math.clamp(1 / (distance * 0.015), 0.4, 1.1)
 
-    if ESP.Boxes and not PlatformMetrics.PerformanceThrottling then
+    if (ESP.Boxes or ESP.Box) and not PlatformMetrics.PerformanceThrottling then
         local topLeft, vis1 = Camera:WorldToViewportPoint(locations.TopLeft.Position)
         local topRight, vis2 = Camera:WorldToViewportPoint(locations.TopRight.Position)
         local bottomLeft, vis3 = Camera:WorldToViewportPoint(locations.BottomLeft.Position)
@@ -249,7 +258,7 @@ function BoxBase:Update()
         end
     end
 
-    if ESP.Names then
+    if ESP.Names or ESP.Name then
         local tagPos, vis5 = Camera:WorldToViewportPoint(locations.TagPos.Position)
 
         if vis5 then
@@ -273,7 +282,7 @@ function BoxBase:Update()
         self.Components.Distance.Visible = false
     end
 
-    if ESP.Tracers then
+    if ESP.Tracers or ESP.Tracer then
         local torsoPos, vis6 = Camera:WorldToViewportPoint(locations.Torso.Position)
 
         if vis6 then
@@ -326,30 +335,28 @@ function ESP:Add(object, options)
         Thickness = self.Thickness,
         Transparency = 1,
         Filled = false,
-        Visible = self.Enabled and self.Boxes
+        Visible = (self.Enabled and (self.Boxes or self.Box))
     })
     box.Components["Name"] = CreateDrawing("Text", {
         Text = box.Name,
         Color = box.Color or self.Color,
         Center = true,
         Outline = true,
-        Font = FontIndex,
         Size = 16,
-        Visible = self.Enabled and self.Names
+        Visible = (self.Enabled and (self.Names or self.Name))
     })
     box.Components["Distance"] = CreateDrawing("Text", {
         Color = box.Color or self.Color,
         Center = true,
         Outline = true,
-        Font = FontIndex,
         Size = 12,
-        Visible = self.Enabled and self.Names
+        Visible = (self.Enabled and (self.Names or self.Name))
     })
     box.Components["Tracer"] = CreateDrawing("Line", {
         Thickness = self.Thickness,
         Color = box.Color or self.Color,
         Transparency = 1,
-        Visible = self.Enabled and self.Tracers
+        Visible = (self.Enabled and (self.Tracers or self.Tracer))
     })
 
     self.Objects[object] = box
